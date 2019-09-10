@@ -25,13 +25,22 @@ BIN_PATH     = $(PREFIX)/bin
 
 VERSION     = $(shell grep '^\#define VERSION ' ../config.h | cut -d '"' -f2)
 
-LLVM_CONFIG ?= llvm-config
+ifeq "$(shell uname)" "OpenBSD"
+  LLVM_CONFIG ?= $(BIN_PATH)/llvm-config
+  HAS_OPT = $(shell test -x $(BIN_PATH)/opt && echo 0 || echo 1)
+  ifeq "$(HAS_OPT)" "1"
+    $(error llvm_mode needs a complete llvm installation (versions 3.8.0 up to 9) -> e.g. "pkg_add llvm-7.0.1p9")
+  endif
+else
+  LLVM_CONFIG ?= llvm-config
+endif
+
 LLVMVER  = $(shell $(LLVM_CONFIG) --version)
 LLVM_UNSUPPORTED = $(shell $(LLVM_CONFIG) --version | egrep -q '^[12]|^3\.0|^1[0-9]' && echo 1 || echo 0 )
 LLVM_MAJOR = ($shell $(LLVM_CONFIG) --version | sed 's/\..*//')
 
 ifeq "$(LLVM_UNSUPPORTED)" "1"
-  $(warn llvm_mode only supports versions 3.8.0 up to 9 )
+  $(warn llvm_mode only supports versions 3.8.0 up to 9)
 endif
 
 # this is not visible yet:
@@ -40,7 +49,7 @@ ifeq "$(LLVM_MAJOR)" "9"
 endif
 
 CFLAGS      ?= -O3 -funroll-loops
-CFLAGS      += -Wall -D_FORTIFY_SOURCE=2 -g -Wno-pointer-sign \
+CFLAGS      += -Wall -D_FORTIFY_SOURCE=2 -g -Wno-pointer-sign -I ../include/ \
                -DAFL_PATH=\"$(HELPER_PATH)\" -DBIN_PATH=\"$(BIN_PATH)\" \
                -DVERSION=\"$(VERSION)\"
 ifdef AFL_TRACE_PC
@@ -48,7 +57,7 @@ ifdef AFL_TRACE_PC
 endif
 
 CXXFLAGS    ?= -O3 -funroll-loops
-CXXFLAGS    += -Wall -D_FORTIFY_SOURCE=2 -g \
+CXXFLAGS    += -Wall -D_FORTIFY_SOURCE=2 -g -I ../include/ \
                -DVERSION=\"$(VERSION)\" -Wno-variadic-macros
 
 CLANG_CFL    = `$(LLVM_CONFIG) --cxxflags` -Wl,-znodelete -fno-rtti -fpic $(CXXFLAGS)
@@ -61,7 +70,7 @@ ifeq "$(shell uname)" "Darwin"
 endif
 
 ifeq "$(shell uname)" "OpenBSD"
-  CLANG_LFL += `$(LLVM_CONFIG) --libdir`/libLLVM.so.0.0
+  CLANG_LFL += `$(LLVM_CONFIG) --libdir`/libLLVM.so
 endif
 
 # We were using llvm-config --bindir to get the location of clang, but
@@ -69,13 +78,18 @@ endif
 # probably better.
 
 ifeq "$(origin CC)" "default"
-  CC         = clang
-  CXX        = clang++
+  ifeq "$(shell uname)" "OpenBSD"
+    CC         = $(BIN_PATH)/clang
+    CXX        = $(BIN_PATH)/clang++
+  else
+    CC         = clang
+    CXX        = clang++
+  endif
 endif
 
 # sanity check.
 # Are versions of clang --version and llvm-config --version equal?
-CLANGVER = $(shell $(CC) --version | sed -E -ne '1{/^.*([0-9]\.[0-9]\.[0-9]).*/s//\1/p}')
+CLANGVER = $(shell $(CC) --version | sed -E -ne '/^.*version\ ([0-9]\.[0-9]\.[0-9]).*/s//\1/p')
 
 
 ifeq "$(shell echo '\#include <sys/ipc.h>@\#include <sys/shm.h>@int main() { int _id = shmget(IPC_PRIVATE, 65536, IPC_CREAT | IPC_EXCL | 0600); shmctl(_id, IPC_RMID, 0); return 0;}' | tr @ '\n' | $(CC) -x c - -o .test2 2>/dev/null && echo 1 || echo 0 )" "1"
